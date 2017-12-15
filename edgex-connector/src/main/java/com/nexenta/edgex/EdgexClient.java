@@ -14,12 +14,16 @@ import java.nio.ByteBuffer;
 import java.nio.channels.Channels;
 import java.nio.channels.WritableByteChannel;
 import java.nio.charset.Charset;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 import com.nexenta.edgex.util.CommonBase;
+import com.nexenta.edgex.util.ConvertUtil;
 
 /**
  * Edge-x java connector
@@ -44,13 +48,23 @@ public class EdgexClient extends CommonBase {
 	public static int DEFAULT_CONNECTION_TIMEOUT = 60000; // 60 seconds
 	public static int DEFAULT_READ_TIMEOUT = 600000; // 600 seconds
 
+	public static SimpleDateFormat dateFormat = new SimpleDateFormat("EEE, d MMM yyyy HH:mm:ss Z");
+
+	S3Signature s3signature;
+
 	String url;
+	URL urlobj;
+
+	String key;
+	String secret;
 	String path;
 	String sid;
 	HttpURLConnection con;
 	int connectionTimeout;
 	int readTimeout;
 	long logicalSize;
+	Map<String,List<String>>requestHeaders;
+
 
 	int responseCode;
 	String errorMsg;
@@ -66,10 +80,14 @@ public class EdgexClient extends CommonBase {
 	 * @param url - s3 url. E.g. http://localhost:9982
 	 * @param connectionTimeout - connection timeout in millisecconds
 	 * @param readTimeout - read timeout in milliseconds
+	 * @param key - s3 authentication key
+	 * @param secret - s3 authentication secret key
 	 */
-	public EdgexClient(String url, int connectionTimeout, int readTimeout) {
+	public EdgexClient(String url, int connectionTimeout, int readTimeout, String key, String secret) {
 		super();
 		this.url = url;
+		this.key = key;
+		this.secret = secret;
 		this.path = "";
 		this.sid = null;
 		this.logicalSize = 0;
@@ -81,6 +99,7 @@ public class EdgexClient extends CommonBase {
 
 		this.err = 0;
 		this.debugMode = 0;
+		this.s3signature = new S3Signature(this.debugMode);
 	}
 
 	/**
@@ -90,16 +109,16 @@ public class EdgexClient extends CommonBase {
 	 * @return
 	 */
 	private int init(String method, boolean needOutput) {
-		URL obj;
 		this.err = 0;
 		this.logicalSize = 0;
+		this.requestHeaders = new HashMap<String, List<String>>();
 		try {
-			obj = new URL(url + this.path);
+			urlobj = new URL(url + this.path);
 		} catch (MalformedURLException e) {
 			return createErrorMessage(1, "Invalid url: " + url, e);
 		}
 		try {
-			con = (HttpURLConnection) obj.openConnection();
+			con = (HttpURLConnection) urlobj.openConnection();
 		} catch (IOException e) {
 			return createErrorMessage(2, "Connection error url: " + url, e);
 		}
@@ -107,6 +126,8 @@ public class EdgexClient extends CommonBase {
 			con.setConnectTimeout(this.connectionTimeout);
 			con.setReadTimeout(this.readTimeout);
 			con.setRequestMethod(method);
+			con.setRequestProperty("Content-Length", "0");
+
 			if (needOutput)
 				con.setDoOutput(true);
 		} catch (Exception e) {
@@ -114,6 +135,82 @@ public class EdgexClient extends CommonBase {
 		}
 		return 0;
 	}
+
+
+	/**
+	 * Inner set request header
+	 * @param key - header key
+	 * @param value - header key value or null
+	 */
+	private void setRequestHeader(String header, String value) {
+		String key = header.toLowerCase();
+		List<String>list = requestHeaders.get(key);
+		if (list == null) {
+			list = new ArrayList<String>();
+			requestHeaders.put(key, list);
+		}
+		if (value == null)
+			value = "";
+		list.add(value);
+		out("setRequestHeader key:", key);
+		con.setRequestProperty(key, value);
+	}
+
+
+	/**
+	 * Inner get request header
+	 * @param key - header key
+	 * @param value - header key value or null
+	 */
+	private String getRequestHeader(String header) {
+		String key = header.toLowerCase();
+		return ConvertUtil.listToString(requestHeaders.get(key));
+	}
+
+	/**
+	 * Inner add auth header method
+	 * @param method - HTTP method
+	 * @param needOutput: true output expected, false - not
+	 * @return
+	 */
+	private int addAuth(String method) {
+		if (this.key != null && this.secret != null) {
+		   try {
+			   String date = dateFormat.format(new Date());
+			   String contentType = getRequestHeader("content-type");
+			   String signature =  s3signature.signRequest(secret, method,
+							contentType,
+							date,
+							"",
+							urlobj,
+							this.requestHeaders);
+				con.setRequestProperty("date", date);
+				con.setRequestProperty("authorization","AWS "+this.key+":"+signature);
+			} catch (Exception e) {
+				return createErrorMessage(5, "Signature error5", e);
+			}
+		}
+		return 0;
+	}
+
+	/**
+	 * Inner connect method, it also adds auth headers if needed
+	 * @param method - HTTP method
+	 * @return
+	 */
+	private boolean connect(String method, int errorCode, String errorMessage) {
+		if (addAuth(method) != 0)
+			return false;
+		try {
+			con.connect();
+		} catch (IOException e) {
+			createErrorMessage(errorCode, errorMessage, e);
+			return false;
+		}
+		return true;
+	}
+
+
 
 	/**
 	 * Close Edge-x connection.
@@ -185,6 +282,7 @@ public class EdgexClient extends CommonBase {
 	 */
 	public void setDebugMode(int debugMode) {
 		this.debugMode = debugMode;
+		s3signature.setDebugMode(debugMode);
 	}
 
 	/**
@@ -331,12 +429,8 @@ public class EdgexClient extends CommonBase {
 			return err;
 		}
 
-		try {
-			con.connect();
-		} catch (IOException e) {
-			createErrorMessage(71, "IO error url: " + this.url, e);
+		if (!this.connect(method, 71, "IO error url: " + this.url))
 			return err;
-		}
 
 		return read(SS_FIN, false);
 	}
@@ -365,12 +459,8 @@ public class EdgexClient extends CommonBase {
 			return err;
 		}
 
-		try {
-			con.connect();
-		} catch (IOException e) {
-			createErrorMessage(73, "IO error url: " + this.url, e);
+		if (!this.connect(method, 73, "IO error url: " + this.url))
 			return err;
-		}
 
 		return read(SS_FIN, false);
 	}
@@ -401,12 +491,8 @@ public class EdgexClient extends CommonBase {
 			return err;
 		}
 
-		try {
-			con.connect();
-		} catch (IOException e) {
-			createErrorMessage(81, "IO error url: " + this.url, e);
+		if (!this.connect(method, 80, "IO error url: " + this.url))
 			return err;
-		}
 
 		return read(SS_FIN, false);
 	}
@@ -417,10 +503,12 @@ public class EdgexClient extends CommonBase {
 	 * @param object - object name
 	 * @param chunkSize - chunk size
 	 * @param btreeOrder - btree order
+	 * @param contentType - mime content type
 	 * @param meta  - key/value metadata map (optional)
 	 * @return error code
 	 */
-	public int create(String bucket, String object, int chunkSize, int btreeOrder, Map<String, String> meta) {
+	public int create(String bucket, String object, int chunkSize, int btreeOrder,
+			String contentType, Map<String, String> meta) {
 		if (this.debugMode > 0) {
 			debug("\n");
 			debug("create");
@@ -443,26 +531,24 @@ public class EdgexClient extends CommonBase {
 		}
 
 		// add request headers
-		con.setRequestProperty("x-ccow-object-oflags", (CCOW_O_CREATE | CCOW_O_REPLACE) + "");
-		con.setRequestProperty("x-ccow-chunkmap-btree-order", btreeOrder + "");
-		con.setRequestProperty("x-ccow-chunkmap-chunk-size", chunkSize + "");
+		setRequestHeader("x-ccow-object-oflags", (CCOW_O_CREATE | CCOW_O_REPLACE) + "");
+		setRequestHeader("x-ccow-chunkmap-btree-order", btreeOrder + "");
+		setRequestHeader("x-ccow-chunkmap-chunk-size", chunkSize + "");
 
-		con.setRequestProperty("x-ccow-offset", "0");
-		con.setRequestProperty("x-ccow-length", "0");
-		con.setRequestProperty("Content-Length", "0");
+		setRequestHeader("x-ccow-offset", "0");
+		setRequestHeader("x-ccow-length", "0");
+		if (contentType != null)
+			setRequestHeader("Content-Type", contentType);
+		setRequestHeader("Content-Length", "0");
 		// Set metadata
 		if (meta != null) {
 			for (String key : meta.keySet()) {
-				con.setRequestProperty("x-amz-meta-" + key, meta.get(key));
+				this.setRequestHeader("x-amz-meta-" + key, meta.get(key));
 			}
 		}
 
-		try {
-			con.connect();
-		} catch (IOException e) {
-			createErrorMessage(81, "IO error url: " + this.url, e);
+		if (!this.connect(method, 81, "IO error url: " + this.url))
 			return err;
-		}
 
 		return read(mode, false);
 	}
@@ -509,16 +595,19 @@ public class EdgexClient extends CommonBase {
 
 		// add request headers
 		if (sid != null)
-			con.setRequestProperty("x-session-id", sid);
+			setRequestHeader("x-session-id", sid);
 
-		con.setRequestProperty("x-ccow-offset", off + "");
-		con.setRequestProperty("x-ccow-length", totlen + "");
-		con.setRequestProperty("Content-Length", totlen + "");
+		setRequestHeader("x-ccow-offset", off + "");
+		setRequestHeader("x-ccow-length", totlen + "");
+		setRequestHeader("Content-Length", totlen + "");
+		this.setRequestHeader("Content-Type", "application/octet-stream");
 
 		WritableByteChannel channel = null;
-		try {
-			con.connect();
 
+		if (!this.connect(method, 82, "IO error url: " + this.url))
+			return err;
+
+		try {
 			// Send data request
 			if (totlen > 0) {
 				OutputStream wr = con.getOutputStream();
@@ -577,15 +666,17 @@ public class EdgexClient extends CommonBase {
 
 		// add request headers
 		if (sid != null)
-			con.setRequestProperty("x-session-id", sid);
+			setRequestHeader("x-session-id", sid);
 
-		con.setRequestProperty("x-ccow-length", totlen + "");
-		con.setRequestProperty("Content-Length", totlen + "");
+		setRequestHeader("x-ccow-length", totlen + "");
+		setRequestHeader("Content-Length", totlen + "");
 
 		WritableByteChannel channel = null;
-		try {
-			con.connect();
 
+		if (!this.connect(method, 83, "IO error url: " + this.url))
+			return err;
+
+		try {
 			// Send data request
 			if (totlen > 0) {
 				OutputStream wr = con.getOutputStream();
@@ -645,16 +736,18 @@ public class EdgexClient extends CommonBase {
 
 		// add request headers
 		if (sid != null)
-			con.setRequestProperty("x-session-id", sid);
+			setRequestHeader("x-session-id", sid);
 
-		con.setRequestProperty("x-ccow-offset", off + "");
-		con.setRequestProperty("x-ccow-length", totlen + "");
-		con.setRequestProperty("Content-Length", totlen + "");
+		setRequestHeader("x-ccow-offset", off + "");
+		setRequestHeader("x-ccow-length", totlen + "");
+		setRequestHeader("Content-Length", totlen + "");
 
 		WritableByteChannel channel = null;
-		try {
-			con.connect();
 
+		if (!this.connect(method, 84, "IO error url: " + this.url))
+			return err;
+
+		try {
 			// Send data request
 			if (totlen > 0) {
 				OutputStream wr = con.getOutputStream();
@@ -702,17 +795,13 @@ public class EdgexClient extends CommonBase {
 
 		// add request headers
 		if (sid != null)
-			con.setRequestProperty("x-session-id", sid);
+			setRequestHeader("x-session-id", sid);
 
-		con.setRequestProperty("x-ccow-offset", "0");
-		con.setRequestProperty("x-ccow-length", "0");
+		setRequestHeader("x-ccow-offset", "0");
+		setRequestHeader("x-ccow-length", "0");
 
-		try {
-			con.connect();
-		} catch (IOException e) {
-			createErrorMessage(85, "Connection error url: " + this.url, e);
+		if (!this.connect(method, 85, "Connection error url: " + this.url))
 			return err;
-		}
 
 		return read(SS_FIN, false);
 	}
@@ -782,17 +871,13 @@ public class EdgexClient extends CommonBase {
 
 		// add request headers
 		if (sid != null)
-			con.setRequestProperty("x-session-id", sid);
+			setRequestHeader("x-session-id", sid);
 
-		con.setRequestProperty("x-ccow-offset", off + "");
-		con.setRequestProperty("x-ccow-length", len + "");
+		setRequestHeader("x-ccow-offset", off + "");
+		setRequestHeader("x-ccow-length", len + "");
 
-		try {
-			con.connect();
-		} catch (IOException e) {
-			createErrorMessage(86, "Connection error url: " + this.url, e);
+		if (!this.connect(method, 86, "Connection error url: " + this.url))
 			return err;
-		}
 
 		return read(mode, binary);
 	}
@@ -819,25 +904,25 @@ public class EdgexClient extends CommonBase {
 		this.path = '/' + bucket + '/' + object + "?comp=kv";
 		this.path += "&finalize";
 
+		// method
+		String method = "POST";
+
 		// init connection
-		err = init("POST", false);
+		err = init(method, false);
 		if (err != 0) {
 			return err;
 		}
 
 		// add request headers
-		con.setRequestProperty("Content-Type", contentType);
-		con.setRequestProperty("Content-Length", "0");
+		setRequestHeader("Content-Type", contentType);
+		setRequestHeader("Content-Length", "0");
 
-		con.setRequestProperty("x-ccow-object-oflags", (CCOW_O_CREATE | CCOW_O_REPLACE) + "");
-		con.setRequestProperty("x-ccow-chunkmap-btree-order", btreeOrder + "");
-		con.setRequestProperty("x-ccow-chunkmap-chunk-size", chunkSize + "");
+		setRequestHeader("x-ccow-object-oflags", (CCOW_O_CREATE | CCOW_O_REPLACE) + "");
+		setRequestHeader("x-ccow-chunkmap-btree-order", btreeOrder + "");
+		setRequestHeader("x-ccow-chunkmap-chunk-size", chunkSize + "");
 
-		try {
-			con.connect();
-		} catch (IOException e) {
-			return createErrorMessage(93, "IO error url: " + this.url, e);
-		}
+		if (!this.connect(method, 51, "IO error url: " + this.url))
+			return err;
 
 		return read(SS_FIN, false);
 	}
@@ -883,14 +968,16 @@ public class EdgexClient extends CommonBase {
 		}
 
 		// add reuqest headers
-		con.setRequestProperty("Content-Type", fmt);
+		setRequestHeader("Content-Type", fmt);
 		if (sid != null)
-			con.setRequestProperty("x-session-id", sid);
+			setRequestHeader("x-session-id", sid);
 
-		con.setRequestProperty("Content-Length", "" + values.length());
+		setRequestHeader("Content-Length", "" + values.length());
+
+		if (!this.connect(method, 52, "IO error url: " + this.url))
+			return err;
 
 		try {
-			con.connect();
 			// Send post request
 			if (values.length() > 0) {
 				OutputStream wr = con.getOutputStream();
@@ -899,7 +986,7 @@ public class EdgexClient extends CommonBase {
 				wr.close();
 			}
 		} catch (IOException e) {
-			createErrorMessage(91, "IO error url: " + this.url, e);
+			createErrorMessage(52, "IO error url: " + this.url, e);
 			return err;
 		}
 
@@ -948,9 +1035,9 @@ public class EdgexClient extends CommonBase {
 		}
 
 		// add reuqest headers
-		con.setRequestProperty("Content-Type", fmt);
+		setRequestHeader("Content-Type", fmt);
 		if (sid != null)
-			con.setRequestProperty("x-session-id", sid);
+			setRequestHeader("x-session-id", sid);
 
 		long length = 0;
 		int n = 0;
@@ -962,10 +1049,12 @@ public class EdgexClient extends CommonBase {
 			n++;
 		}
 
-		con.setRequestProperty("Content-Length", "" + length);
+		setRequestHeader("Content-Length", "" + length);
+
+		if (!this.connect(method, 53, "IO error url: " + this.url))
+			return err;
 
 		try {
-			con.connect();
 			// Send post request
 			if (length > 0) {
 				OutputStream wr = con.getOutputStream();
@@ -981,7 +1070,7 @@ public class EdgexClient extends CommonBase {
 				wr.close();
 			}
 		} catch (IOException e) {
-			createErrorMessage(91, "IO error url: " + this.url, e);
+			createErrorMessage(53, "IO error url: " + this.url, e);
 			return err;
 		}
 
@@ -1031,9 +1120,9 @@ public class EdgexClient extends CommonBase {
 		}
 
 		// add reuqest headers
-		con.setRequestProperty("Content-Type", fmt);
+		setRequestHeader("Content-Type", fmt);
 		if (sid != null)
-			con.setRequestProperty("x-session-id", sid);
+			setRequestHeader("x-session-id", sid);
 
 		long length = 0;
 		int n = 0;
@@ -1045,10 +1134,12 @@ public class EdgexClient extends CommonBase {
 			n++;
 		}
 
-		con.setRequestProperty("Content-Length", "" + length);
+		setRequestHeader("Content-Length", "" + length);
+
+		if (!this.connect(method, 54, "IO error url: " + this.url))
+			return err;
 
 		try {
-			con.connect();
 			// Send post request
 			if (length > 0) {
 				OutputStream wr = con.getOutputStream();
@@ -1064,7 +1155,7 @@ public class EdgexClient extends CommonBase {
 				wr.close();
 			}
 		} catch (IOException e) {
-			createErrorMessage(91, "IO error url: " + this.url, e);
+			createErrorMessage(54, "IO error url: " + this.url, e);
 			return err;
 		}
 
@@ -1112,14 +1203,16 @@ public class EdgexClient extends CommonBase {
 		}
 
 		// add reuqest headers
-		con.setRequestProperty("Content-Type", fmt);
+		setRequestHeader("Content-Type", fmt);
 		if (sid != null)
-			con.setRequestProperty("x-session-id", sid);
+			setRequestHeader("x-session-id", sid);
 
-		con.setRequestProperty("Content-Length", "" + values.length());
+		setRequestHeader("Content-Length", "" + values.length());
+
+		if (!this.connect(method, 54, "IO error url: " + this.url))
+			return err;
 
 		try {
-			con.connect();
 			// Send delete values
 			if (values.length() > 0) {
 				OutputStream wr = con.getOutputStream();
@@ -1128,7 +1221,7 @@ public class EdgexClient extends CommonBase {
 				wr.close();
 			}
 		} catch (IOException e) {
-			createErrorMessage(92, "IO error url: " + this.url, e);
+			createErrorMessage(54, "IO error url: " + this.url, e);
 			return err;
 		}
 
@@ -1169,22 +1262,21 @@ public class EdgexClient extends CommonBase {
 		if (values)
 			this.path += "&values=1";
 
+		// method
+		String method = "GET";
+
 		// init connection
-		err = init("GET", false);
+		err = init(method, false);
 		if (err != 0) {
 			return err;
 		}
 
 		// add reuqest headers
-		con.setRequestProperty("Content-Type", fmt);
-		con.setRequestProperty("Content-Length", "0");
+		setRequestHeader("Content-Type", fmt);
+		setRequestHeader("Content-Length", "0");
 
-		try {
-			con.connect();
-		} catch (IOException e) {
-			createErrorMessage(93, "Connection error url: " + this.url, e);
+		if (!this.connect(method, 55, "IO error url: " + this.url))
 			return err;
-		}
 
 		return read(SS_FIN, false);
 	}

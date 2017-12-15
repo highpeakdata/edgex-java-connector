@@ -1,5 +1,8 @@
 package com.nexenta.edgex;
 
+import java.util.ArrayList;
+import java.util.List;
+
 public class KeyValue {
 	public String key;
 	public String value;
@@ -17,6 +20,15 @@ public class KeyValue {
 	public int length() {
 		return key.length() + value.length() + 1;
 	}
+
+	public static List<KeyValue> toList(String ...arr) {
+		ArrayList<KeyValue>res = new ArrayList<KeyValue>();
+		for (int i = 0; i < arr.length; i += 2) {
+			res.add(new KeyValue(arr[i], arr[i+1]));
+		}
+		return res;
+	}
+
 
 	@Override
 	public String toString() {

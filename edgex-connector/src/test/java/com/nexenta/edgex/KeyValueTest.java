@@ -33,9 +33,16 @@ public class KeyValueTest extends CommonBase {
 		out("\n\nSetup edgex client");
 		String url = (System.getProperty("edgex") != null ? System.getProperty("edgex") : "http://localhost:9982");
 		out("URL", url);
+		String key = System.getProperty("key");
+		String secret = System.getProperty("secret");
+		out("key", key);
+		out("secret", secret);
+
 		edgex = new EdgexClient(url,
 				EdgexClient.DEFAULT_CONNECTION_TIMEOUT,
-				EdgexClient.DEFAULT_READ_TIMEOUT);
+				EdgexClient.DEFAULT_READ_TIMEOUT,
+				key,
+				secret);
 		edgex.setDebugMode(2);
 	}
 

@@ -2,7 +2,9 @@ package com.nexenta.edgex.util;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 public class ConvertUtil {
@@ -34,6 +36,37 @@ public class ConvertUtil {
 	}
 
 
+	public static Map<String,List<String>> mapToListMap(Map<String,String> map) {
+		Map<String,List<String>>res = new HashMap<String, List<String>>();
+		for (String key: map.keySet()) {
+			List<String>list = res.get(key);
+			if (list == null) {
+				list = new ArrayList<String>();
+				res.put(key, list);
+			}
+			String value = map.get(key);
+			list.add(value != null ? value : "");
+		}
+		return res;
+	}
+
+	public static Map<String,List<String>> arrayToListMap(Object arr[]) {
+		Map<String,List<String>>res = new HashMap<String, List<String>>();
+		for (int i = 0; i < arr.length; i += 2) {
+			List<String>list = res.get(arr[i]);
+			if (list == null) {
+				list = new ArrayList<String>();
+				res.put(arr[i]+"", list);
+			}
+			list.add(arr[i+1]+"");
+		}
+		return res;
+	}
+
+	public static Map<String,List<String>> strToListMap(Object ...arr) {
+		return arrayToListMap(arr);
+	}
+
 	public static ByteBuffer[] strToBuffer(String ...arr) {
 		ByteBuffer res[] = new ByteBuffer[arr.length];
 		for (int i = 0; i < arr.length; i++) {
@@ -41,6 +74,18 @@ public class ConvertUtil {
 			res[i].put(arr[i].getBytes(Charset.forName("UTF-8")));
 		}
 		return res;
+	}
+
+	public static String listToString(List<String>list) {
+		if (list == null)
+			return "";
+		StringBuilder res = new StringBuilder();
+		for (String s: list) {
+			if (res.length() > 0)
+				res.append(',');
+			res.append(s);
+		}
+		return res.toString();
 	}
 
 }
