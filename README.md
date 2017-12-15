@@ -7,7 +7,7 @@ The API documentation is available here https://nexenta.github.io/edgex-java-con
 
 * Advanced Versioned S3 Object Append and RW "Object as File" access
 * S3 Object as a Key-Value database
-* High-performance Versioned S3 Object Stream Session (RW)
+* High-performance S3 Object Stream Session (RW)
 
 
 ## API examples
