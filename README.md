@@ -52,16 +52,14 @@ On Ubuntu
    The build process creates output jars and installes them to local maven repository:
       target/edgex-connector-1.0-SNAPSHOT.jar
       target/edgex-connector-1.0-SNAPSHOT-javadoc.jar
- 
- 
- 5. Test edgex-java-connector 
-   
-   To test edgex-java-connector you need running NexentaEdge cluster and configured s3 gateway service
-   
+
+
+5. Test edgex-java-connector with NexentaEdge cluster 
+
    ```console
    mvn test -Dedgex=http://<s3 gateway ip>:<port> -Dkey=<s3 key> -Dsecret=<s3 secret key>
    ```
-
+   To test edgex-java-connector you need running NexentaEdge cluster and configured s3 Edge-X gateway service
    
    
 
