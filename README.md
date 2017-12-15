@@ -49,10 +49,12 @@ On Ubuntu
    mvn install -Dmaven.test.skip=true
    ```
    
-   The build process creates output jars and installes them to local maven repository:
-      target/edgex-connector-1.0-SNAPSHOT.jar
+   The build process creates output jars:
+   ```console
+      target/edgex-connector-1.0-SNAPSHOT.jar,
       target/edgex-connector-1.0-SNAPSHOT-javadoc.jar
-
+   ```
+   and installes them to local maven repository.
 
 5. Test edgex-java-connector with NexentaEdge cluster 
 
