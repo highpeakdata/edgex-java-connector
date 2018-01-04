@@ -1319,8 +1319,8 @@ public class EdgexClient extends CommonBase {
 
 
 	/**
-	 * Get last response as String
-	 * @return - response as string
+	 * Get last response as string list
+	 * @return - response string list
 	 */
 	public ArrayList<String> getResponse() {
 		return response;
