@@ -2,6 +2,10 @@ package com.nexenta.edgex;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -9,6 +13,7 @@ import java.io.OutputStream;
 import java.io.StringWriter;
 import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
+import java.net.URI;
 import java.net.URL;
 import java.nio.ByteBuffer;
 import java.nio.channels.Channels;
@@ -59,7 +64,7 @@ public class EdgexClient extends CommonBase {
 	String secret;
 	String path;
 	String sid;
-	HttpURLConnection con;
+	HttpURLConnection con=null;
 	int connectionTimeout;
 	int readTimeout;
 	long logicalSize;
@@ -80,8 +85,6 @@ public class EdgexClient extends CommonBase {
 	 * @param url - s3 url. E.g. http://localhost:9982
 	 * @param connectionTimeout - connection timeout in millisecconds
 	 * @param readTimeout - read timeout in milliseconds
-	 * @param key - s3 authentication key
-	 * @param secret - s3 authentication secret key
 	 */
 	public EdgexClient(String url, int connectionTimeout, int readTimeout, String key, String secret) {
 		super();
@@ -113,8 +116,10 @@ public class EdgexClient extends CommonBase {
 		this.logicalSize = 0;
 		this.requestHeaders = new HashMap<String, List<String>>();
 		try {
-			urlobj = new URL(url + this.path);
-		} catch (MalformedURLException e) {
+			URL ul= new URL(url + this.path);
+			URI uri = new URI(ul.getProtocol(), ul.getUserInfo(), ul.getHost(), ul.getPort(), ul.getPath(), ul.getQuery(), ul.getRef());
+			urlobj = new URL(uri.toASCIIString());
+		} catch (Exception e) {
 			return createErrorMessage(1, "Invalid url: " + url, e);
 		}
 		try {
@@ -152,7 +157,6 @@ public class EdgexClient extends CommonBase {
 		if (value == null)
 			value = "";
 		list.add(value);
-		out("setRequestHeader key:", key);
 		con.setRequestProperty(key, value);
 	}
 
@@ -326,7 +330,7 @@ public class EdgexClient extends CommonBase {
 	private int read(int mode, boolean binary) {
 		try {
 			this.responseCode = con.getResponseCode();
-			if (this.debugMode > 1) {
+			if (this.debugMode > 0) {
 				debug("responseCode", responseCode);
 				debug("Headers", this.getHeaders());
 			}
@@ -387,6 +391,50 @@ public class EdgexClient extends CommonBase {
 
 		return err;
 	}
+
+
+	/**
+	 * Inner method to do object read
+	 *
+	 * @param mode - read mode
+	 * @param binary - binary read
+	 * @return - error code
+	 */
+	private int reads3(String no) {
+		FileOutputStream fo = null;
+		InputStream in = null;
+		try {
+			this.responseCode = con.getResponseCode();
+			if (this.debugMode > 0) {
+				debug("responseCode", responseCode);
+				debug("Headers", this.getHeaders());
+			}
+			if (this.responseCode >= 300) {
+				this.close();
+				return createErrorMessage(this.responseCode, "Server error url: " + this.url, null);
+			}
+
+			in = con.getInputStream();
+			byte buf[] = new byte[BYTE_BUFFER];
+			int len = 0;
+			fo = new FileOutputStream(new File(no));
+			while ((len = in.read(buf)) > 0) {
+				fo.write(buf, 0, len);
+			}
+		} catch (IOException e) {
+			return createErrorMessage(99, "IO error url: " + this.url, e);
+		} finally {
+			if (in != null) {
+				try { in.close(); } catch (Exception ei) {}
+			}
+			if (fo != null) {
+				try { fo.close(); } catch (Exception ef) {}
+			}
+		}
+
+		return err;
+	}
+
 
 	/**
 	 * Inner error message formater
@@ -483,7 +531,7 @@ public class EdgexClient extends CommonBase {
 
 		String method = "DELETE";
 
-		this.path = '/' + bucket + '/' + object;
+		this.path = '/' + bucket + '/' + object + "?comp=del";
 
 		// init connection
 		err = init(method, false);
@@ -621,6 +669,78 @@ public class EdgexClient extends CommonBase {
 		} catch (IOException e) {
 			createErrorMessage(82, "IO error url: " + this.url, e);
 			return err;
+		}
+
+		return read(mode, false);
+	}
+
+	/**
+	 * Put data object from file
+	 *
+	 * @param bucket - bucket name
+	 * @param object - object name
+	 * @param ni - data file name
+	 * @return error code
+	 */
+	public int puts3(String bucket, String object, String ni, String content, Map<String, String>meta) {
+		int mode = SS_FIN;
+		if (this.debugMode > 0) {
+			debug("\n");
+			debug("put");
+			debug("put bucket", bucket);
+			debug("put object", object);
+			debug("put name", ni);
+		}
+
+		String method = "PUT";
+		this.path = '/' + bucket + '/' + object;
+
+		// init connection
+		err = init(method, true);
+		if (err != 0) {
+			return err;
+		}
+
+
+		File f = new File(ni);
+		if (!f.exists() || !f.canRead()) {
+			return 401;
+		}
+
+		long totlen = f.length();
+
+		// add request headers
+		setRequestHeader("Content-Length", totlen + "");
+		if (content != null && content.length() > 0)
+			setRequestHeader("Content-Type", content);
+		if (meta != null && meta.size() > 0) {
+			for (String key: meta.keySet()) {
+				setRequestHeader(key, meta.get(key));
+			}
+		}
+
+		if (!this.connect(method, 82, "IO error url: " + this.url))
+			return err;
+
+		byte buf[] = new byte[BYTE_BUFFER];
+		int len = 0;
+		FileInputStream fi = null;
+		OutputStream wr = null;
+		try {
+			// Send data request
+			if (totlen > 0) {
+				fi = new FileInputStream(f);
+				wr = con.getOutputStream();
+				while ((len = fi.read(buf)) > 0) {
+					wr.write(buf, 0, len);
+				}
+			}
+		} catch (IOException e) {
+			createErrorMessage(82, "IO error url: " + this.url, e);
+			return err;
+		} finally {
+			try { if (wr != null) wr.close(); } catch (Exception e1) {};
+			try { if (fi != null) fi.close(); } catch (Exception e2) {};
 		}
 
 		return read(mode, false);
@@ -806,6 +926,37 @@ public class EdgexClient extends CommonBase {
 		return read(SS_FIN, false);
 	}
 
+	/**
+	 * Get object headers (stats)
+	 * @param bucket - bucket name
+	 * @param object - object name
+	 * @return error code
+	 */
+	public int heads3(String bucket, String object) {
+		if (this.debugMode > 0) {
+			debug("\n");
+			debug("head");
+			debug("head bucket:", bucket);
+			debug("head object:", object);
+			debug("head sid:", sid);
+		}
+
+		String method = "HEAD";
+
+		this.path = '/' + bucket + '/' + object;
+
+		// init connection
+		err = init(method, false);
+		if (err != 0) {
+			return err;
+		}
+
+		if (!this.connect(method, 85, "Connection error url: " + this.url))
+			return err;
+
+		return read(SS_FIN, false);
+	}
+
 
 	/**
 	 * Get whole object as string
@@ -881,6 +1032,43 @@ public class EdgexClient extends CommonBase {
 
 		return read(mode, binary);
 	}
+
+
+	/**
+	 * Read the s3 object
+	 * @param bucket - bucket name
+	 * @param object - object name
+	 * @param off -offset
+	 * @param len - block length
+	 * @param more - true to do stream writes, false to finish stream writes
+	 * @param binary - true get binary response, false get string response
+	 * @return error code
+	 */
+	public int gets3(String bucket, String object, String no) {
+
+		if (this.debugMode > 0) {
+			debug("\n");
+			debug("gets3");
+			debug("gets3 bucket:", bucket);
+			debug("gets3 object:", object);
+		}
+
+		String method = "GET";
+
+		this.path = '/' + bucket + '/' + object;
+
+		// init connection
+		err = init(method, false);
+		if (err != 0) {
+			return err;
+		}
+
+		if (!this.connect(method, 86, "Connection error url: " + this.url))
+			return err;
+
+		return reads3(no);
+	}
+
 
 	/**
 	 * Create key/value store
@@ -1319,8 +1507,8 @@ public class EdgexClient extends CommonBase {
 
 
 	/**
-	 * Get last response as string list
-	 * @return - response string list
+	 * Get last response as String
+	 * @return - response as string
 	 */
 	public ArrayList<String> getResponse() {
 		return response;
