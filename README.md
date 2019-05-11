@@ -1,6 +1,17 @@
 # NexentaEdge Edge-X Java connector 
 edgex-java-connector is Edge-X Java connector library
 
+S3X interface for High-Performance load/unload/edit of billions of images
+via object HTTP/S interface.
+
+<p align="center">
+  <img src="https://github.com/Nexenta/edgex-perl-connector/raw/master/edgefs-s3x-kv-benefits.png?raw=true" alt="edgefs-s3x-kv-benefits.png"/>
+</p>
+
+It is S3 compatible protocol, with extensions that allows batch operations
+so that load of hundreds objects (like pictures, logs, packets, etc) can be
+combined as one S3 emulated object.
+
 The API documentation is available here https://nexenta.github.io/edgex-java-connector/
 
 ## Use cases details
