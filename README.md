@@ -1,4 +1,4 @@
-# NexentaEdge Edge-X Java connector 
+# EdgeFS Edge-X Java connector 
 edgex-java-connector is Edge-X Java connector library
 
 S3X interface for High-Performance load/unload/edit of billions of images
@@ -67,12 +67,12 @@ On Ubuntu
    ```
    and installes them to local maven repository.
 
-5. Test edgex-java-connector with NexentaEdge cluster 
+5. Test edgex-java-connector with EdgeFS cluster 
 
    ```console
    mvn test -Dedgex=http://<s3 gateway ip>:<port> -Dkey=<s3 key> -Dsecret=<s3 secret key>
    ```
-   To test edgex-java-connector you need running NexentaEdge cluster and configured s3 Edge-X gateway service
+   To test edgex-java-connector you need running EdgeFS cluster and configured s3 Edge-X gateway service
    
    
 
