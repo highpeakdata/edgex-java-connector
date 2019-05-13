@@ -1,10 +1,11 @@
-package com.nexenta.edgex;
+package com.nexenta.edgex.test;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 import java.nio.ByteBuffer;
 import java.util.Map;
+import java.util.Random;
 
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
@@ -21,14 +22,22 @@ public class ObjectTest extends CommonBase {
    static EdgexClient edgex;
 
    static int err = 0;
-   static String bucket = "bkobj";
-   static String notbucket = "abcdefg";
-   static String object = "obj";
+   static String bucket = "bkobj"  + System.currentTimeMillis();
+   static String notbucket = "abcdefg" + System.currentTimeMillis();
+   static String object = "obj"  + System.currentTimeMillis();
    static String contentType = "application/octet-stream";
-   static String notobject = "abcdobj";
+   static String notobject = "abcdobj" + System.currentTimeMillis();
    static String stest = "Abcdefg";
    static String sappend = "oooooo";
    static String sblock = "bb";
+
+   public static String randomString(int size) {
+       byte buffer[] = new byte[size];
+       Random random = new Random();
+       for (int i = 0; i < size; i++)
+       	   buffer[i] = (byte) (random.nextInt(26) + 'a');
+       return new String(buffer);
+   }
 
 	@BeforeClass
 	public static void setUp() throws Exception {
@@ -45,7 +54,7 @@ public class ObjectTest extends CommonBase {
 				EdgexClient.DEFAULT_READ_TIMEOUT,
 				key,
 				secret);
-		edgex.setDebugMode(2);
+		edgex.setDebugMode(1);
 	}
 
 	@AfterClass
@@ -109,15 +118,99 @@ public class ObjectTest extends CommonBase {
 		assertEquals(err, 0);
 	}
 
-
 	@Test
 	public void test40() {
 		out("\n\ncan read the object as string");
 		err = edgex.get(bucket, object);
 		assertEquals(err, 0);
 		out("Response length: " + edgex.getResponseAsString().length());
-		assertTrue(edgex.getResponseAsString().equals(stest + stest));
+		assertTrue(edgex.getResponseAsString().equals(stest+stest));
 	}
+
+
+//	@Test
+//	public void test41() {
+//		out("\n\ncan write/read random string");
+//		String ornd = "rnd4";
+//		err = edgex.create(bucket, ornd, EdgexClient.DEFAULT_CHUNKSIZE, EdgexClient.DEFAULT_BTREE_ORDER,
+//				contentType, null);
+//		assertEquals(err, 0);
+//
+//		int size = 50000;
+//		int step = 100;
+//		StringBuffer srnd = new StringBuffer(randomString(size));
+//		String res;
+//
+//
+//		// Add at the end
+//		int num = size / step;
+//		for (int i=0; i<num; i++) {
+//			int off = i*step;
+//			ByteBuffer arr[] = ConvertUtil.strToBuffer(srnd.substring(off, off+step));
+//			err = edgex.write(bucket, ornd, arr, off, (i < (num - 1) ? true: false));
+//			assertEquals(err, 0);
+//		}
+//
+//		// Read it back
+//		for (int i=0; i<num; i++) {
+//			int off = i*step;
+//			err = edgex.get(bucket, ornd, off, step, (i < (num - 1) ? true: false), false);
+//			assertEquals(err, 0);
+//			res = edgex.getResponseAsString();
+//			assertTrue(srnd.substring(off, off+step).equals(res));
+//		}
+//
+//		// Read whole
+//		err = edgex.get(bucket, ornd);
+//		assertEquals(err, 0);
+//		res = edgex.getResponseAsString();
+//		out("srnd.length: " + srnd.length());
+//		out("Response length: " + res.length());
+//		assertTrue(srnd.toString().equals(res));
+//
+//		// Set random
+//		Random random = new Random();
+//		for (int i=0; i<100; i++) {
+//			int off = random.nextInt(size);
+//			int st = random.nextInt(1000)+1;
+//			String s = randomString(st);
+//			out(i + " off: " + off + " s.len: "+ s.length());
+//			srnd.replace(off, off+s.length(), s);
+//			ByteBuffer arr[] = ConvertUtil.strToBuffer(srnd.substring(off, off+s.length()));
+//			err = edgex.writeBlock(bucket, ornd, arr, off);
+//			assertEquals(err, 0);
+//
+//			err = edgex.get(bucket, ornd);
+//			assertEquals(err, 0);
+//			res = edgex.getResponseAsString();
+//			out("srnd.length: " + srnd.length());
+//			out("Response length: " + res.length());
+//
+//			if (!srnd.toString().equals(res)) {
+//				for (int n=0; n<srnd.length() && n<res.length(); n++) {
+//					if (srnd.charAt(n) != res.charAt(n)) {
+//						out("diff at: " + n);
+//					}
+//				}
+//				System.exit(1);
+//			}
+//		}
+//
+//
+//		// Read whole
+//		err = edgex.get(bucket, ornd);
+//		assertEquals(err, 0);
+//		res = edgex.getResponseAsString();
+//		out("srnd.length: " + srnd.length());
+//		out("Response length: " + res.length());
+//		assertTrue(srnd.toString().equals(res));
+//
+//		err = edgex.delete(bucket, ornd);
+//		if (err != 0) {
+//			error(edgex.getErrorMsg());
+//		}
+//		assertEquals(err, 0);
+//	}
 
 	@Test
 	public void test45() {
@@ -150,6 +243,7 @@ public class ObjectTest extends CommonBase {
 		err = edgex.head(bucket, object);
 		assertEquals(err, 0);
 		long len1 = edgex.getLogicalSize();
+		out("len1: " + len1);
 
 
 		err = edgex.append(bucket, object, ConvertUtil.strToBuffer(sappend, sappend));
@@ -158,6 +252,7 @@ public class ObjectTest extends CommonBase {
 		err = edgex.head(bucket, object);
 		assertEquals(err, 0);
 		long len2 = edgex.getLogicalSize();
+		out("len2: " + len2);
 
 
 		assertTrue(len2 - len1 == sappend.length()*2);
@@ -201,6 +296,5 @@ public class ObjectTest extends CommonBase {
 		}
 		assertEquals(err, 0);
 	}
-
 }
 

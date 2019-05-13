@@ -1,4 +1,4 @@
-package com.nexenta.edgex;
+package com.nexenta.edgex.test;
 
 import static org.junit.Assert.fail;
 

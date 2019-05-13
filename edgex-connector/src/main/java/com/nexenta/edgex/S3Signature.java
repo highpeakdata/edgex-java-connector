@@ -29,11 +29,11 @@ import com.nexenta.edgex.util.ConvertUtil;
 public class S3Signature extends CommonBase {
 	private static Base64.Encoder encoder64 = Base64.getEncoder();
     private static String qstrings =
-            ",acl,torrent,logging,location,policy,requestPayment,versioning," +
-            "versions,versionId,notification,uploadId,uploads,partNumber,website," +
-            "delete,lifecycle,tagging,cors,restore,replication,accelerate," +
-            "inventory,analytics,metrics," +
-            "response-cache-control,response-content-disposition,response-content-encoding," +
+            ",acl,torrent,logging,location,policy,requestPayment,versioning" +
+            "versions,versionId,notification,uploadId,uploads,partNumber,website" +
+            "delete,lifecycle,tagging,cors,restore,replication,accelerate" +
+            "inventory,analytics,metrics" +
+            "response-cache-control,response-content-disposition,response-content-encoding" +
             "response-content-language,response-content-type,response-expires,";
 
     private int debugMode = 0;
@@ -160,6 +160,7 @@ public class S3Signature extends CommonBase {
 		Mac mac = Mac.getInstance("HmacSHA1");
 		mac.init(signingKey);
 		byte[] sig1 = mac.doFinal(stringToSign.getBytes(StandardCharsets.UTF_8));
+		//out(javax.xml.bind.DatatypeConverter.printHexBinary(sig1));
 	    return new String(encoder64.encode(sig1));
 	}
 

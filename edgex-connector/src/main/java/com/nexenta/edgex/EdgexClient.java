@@ -15,6 +15,7 @@ import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URL;
+import java.net.URLEncoder;
 import java.nio.ByteBuffer;
 import java.nio.channels.Channels;
 import java.nio.channels.WritableByteChannel;
@@ -118,7 +119,19 @@ public class EdgexClient extends CommonBase {
 		try {
 			URL ul= new URL(url + this.path);
 			URI uri = new URI(ul.getProtocol(), ul.getUserInfo(), ul.getHost(), ul.getPort(), ul.getPath(), ul.getQuery(), ul.getRef());
-			urlobj = new URL(uri.toASCIIString());
+			String ascii = uri.toASCIIString();
+			if (this.debugMode > 1)
+				out("ascii: " + ascii);
+			int p = ascii.indexOf('?');
+			String query = "";
+			if (p > 0) {
+				query = ascii.substring(p);
+				ascii = ascii.substring(0,  p);
+			}
+			ascii = ascii.replace("=", "%3D").replace("@", "%40") + query;
+			urlobj = new URL(ascii);
+			if (this.debugMode > 1)
+				out("urlobj: " + urlobj);
 		} catch (Exception e) {
 			return createErrorMessage(1, "Invalid url: " + url, e);
 		}
@@ -674,6 +687,17 @@ public class EdgexClient extends CommonBase {
 		return read(mode, false);
 	}
 
+	static void memoryStats(String h) {
+		Runtime runtime = Runtime.getRuntime();
+		long totalMemory = runtime.totalMemory(); // current heap allocated to the VM process
+		long freeMemory = runtime.freeMemory(); // out of the current heap, how much is free
+		long maxMemory = runtime.maxMemory(); // Max heap VM can use e.g. Xmx setting
+		long usedMemory = totalMemory - freeMemory; // how much of the current heap the VM is using
+		long availableMemory = maxMemory - usedMemory; // available memory i.e. Maximum heap size minus the current amount used
+		out(h + " Max       memory: " + (maxMemory / (1024 * 1024)) + "M");
+		out(h + " Available memory: " + (availableMemory / (1024 * 1024)) + "M");
+		out(h + " Used      memory: " + (usedMemory / (1024 * 1024)) + "M");
+	}
 	/**
 	 * Put data object from file
 	 *
@@ -719,29 +743,163 @@ public class EdgexClient extends CommonBase {
 			}
 		}
 
+		WritableByteChannel channel = null;
+
+		this.con.setFixedLengthStreamingMode(totlen);
+
 		if (!this.connect(method, 82, "IO error url: " + this.url))
 			return err;
 
+		//memoryStats("Before");
+
 		byte buf[] = new byte[BYTE_BUFFER];
 		int len = 0;
+		int n = 0;
 		FileInputStream fi = null;
 		OutputStream wr = null;
 		try {
 			// Send data request
 			if (totlen > 0) {
-				fi = new FileInputStream(f);
 				wr = con.getOutputStream();
+				fi = new FileInputStream(f);
+//				channel = Channels.newChannel(wr);
+//				while ((len = fi.read(buf)) > 0) {
+//					n++;
+//					if (n % 1000 == 0) {
+//					   memoryStats(n + " in");
+//					}
+//					ByteBuffer bb = ByteBuffer.allocate(len);
+//					bb.put(buf, 0, len);
+//					bb.flip();
+//					channel.write(bb);
+//				}
 				while ((len = fi.read(buf)) > 0) {
+//					n++;
+//					if (n % 1000 == 0)
+//					   memoryStats(n + " in");
 					wr.write(buf, 0, len);
+					wr.flush();
 				}
 			}
-		} catch (IOException e) {
+		} catch (Exception e) {
+			createErrorMessage(82, "IO error url: " + this.url, e);
+			return err;
+		} finally {
+			try { if (channel != null) channel.close(); } catch (Exception e1) {};
+			try { if (wr != null) wr.close(); } catch (Exception e1) {};
+			try { if (fi != null) fi.close(); } catch (Exception e2) {};
+		}
+
+		//memoryStats("After");
+
+		return read(mode, false);
+	}
+
+	/**
+	 * Put data object the other edgex source
+	 *
+	 * @param bucket - bucket name
+	 * @param object - object name
+	 * @param ni - data file name
+	 * @return error code
+	 */
+	public int puts4(EdgexClient edgex, String bucket, String object, String content, Map<String, String>meta) {
+		int mode = SS_FIN;
+		if (this.debugMode > 0) {
+			debug("\n");
+			debug("put");
+			debug("put bucket", bucket);
+			debug("put object", object);
+		}
+
+		err = edgex.heads3(bucket, object);
+		if (err != 0) {
+			return err;
+		}
+		Map<String, String> smeta = edgex.getHeaders();
+		if (this.debugMode > 0) {
+			debug("\n");
+			debug("put headers: " + smeta);
+		}
+
+		String slen = (smeta.get("Content-Length") != null ? smeta.get("Content-Length") : smeta.get("content-length"));
+		if (this.debugMode > 0) {
+			debug("\n");
+			debug("put slen: " + slen);
+		}
+
+
+		String method = "PUT";
+		this.path = '/' + bucket + '/' + object;
+
+		// init connection
+		err = init(method, true);
+		if (err != 0) {
+			return err;
+		}
+
+
+
+		HttpURLConnection c = edgex.gets4(bucket, object);
+		if (c == null) {
+			return edgex.getErr();
+		}
+
+		long totlen = 0;
+		if (slen != null) {
+			totlen = Long.parseLong(slen);
+		}
+		if (this.debugMode > 0) {
+			debug("\n");
+			debug("put totalen: " + totlen);
+		}
+
+
+		// add request headers
+		setRequestHeader("Content-Length", totlen + "");
+		if (content != null && content.length() > 0)
+			setRequestHeader("Content-Type", content);
+		if (meta != null && meta.size() > 0) {
+			for (String key: meta.keySet()) {
+				setRequestHeader(key, meta.get(key));
+			}
+		}
+
+		this.con.setFixedLengthStreamingMode(totlen);
+
+		if (!this.connect(method, 82, "IO error url: " + this.url))
+			return err;
+
+		//memoryStats("Before");
+
+		byte buf[] = new byte[BYTE_BUFFER];
+		int len = 0;
+		int n = 0;
+		InputStream in = null;
+		OutputStream wr = null;
+		try {
+		    int code = c.getResponseCode();
+			if (code > 300) {
+				return code;
+			}
+			// Send data request
+			if (totlen > 0) {
+				wr = con.getOutputStream();
+				in = c.getInputStream();
+				while ((len = in.read(buf)) > 0) {
+					wr.write(buf, 0, len);
+					wr.flush();
+				}
+			}
+		} catch (Exception e) {
 			createErrorMessage(82, "IO error url: " + this.url, e);
 			return err;
 		} finally {
 			try { if (wr != null) wr.close(); } catch (Exception e1) {};
-			try { if (fi != null) fi.close(); } catch (Exception e2) {};
+			try { if (in != null) in.close(); } catch (Exception e2) {};
 		}
+
+		//memoryStats("After");
 
 		return read(mode, false);
 	}
@@ -1069,6 +1227,41 @@ public class EdgexClient extends CommonBase {
 		return reads3(no);
 	}
 
+	/**
+	 * Read the s3 object
+	 * @param bucket - bucket name
+	 * @param object - object name
+	 * @param off -offset
+	 * @param len - block length
+	 * @param more - true to do stream writes, false to finish stream writes
+	 * @param binary - true get binary response, false get string response
+	 * @return error code
+	 */
+	public HttpURLConnection gets4(String bucket, String object) {
+
+		if (this.debugMode > 0) {
+			debug("\n");
+			debug("gets4");
+			debug("gets4 bucket:", bucket);
+			debug("gets4 object:", object);
+		}
+
+		String method = "GET";
+
+		this.path = '/' + bucket + '/' + object;
+
+		// init connection
+		err = init(method, false);
+		if (err != 0) {
+			return null;
+		}
+
+		if (!this.connect(method, 86, "Connection error url: " + this.url))
+			return null;
+
+		return con;
+	}
+
 
 	/**
 	 * Create key/value store
@@ -1187,6 +1380,74 @@ public class EdgexClient extends CommonBase {
 	 * @param bucket - bucket name
 	 * @param object - key/value object name
 	 * @param key - key if format equals application/octet-stream or empty
+	 * @param value - binary value
+	 * @param contentType - record content type, e.g. image/jpeg
+	 * @param timestamp - record timestamp (sec/msec)
+	 * @param more - true to continue stream operations, false to finish stream operations
+	 * @return error code
+	 */
+	public int keyValuePostOne(String bucket, String object, String key,
+			byte[] value, String contentType, long timestamp, boolean more) {
+		String method = "POST";
+		int mode = (more ? SS_CONT : SS_FIN);
+
+		if (this.debugMode > 0) {
+			debug("\n");
+			debug("keyValuePost");
+			debug("keyValuePost bucket:", bucket);
+			debug("keyValuePost object:", object);
+			debug("keyValuePost key:", key);
+			debug("keyValuePost value length:", value.length);
+			debug("keyValuePost content type:", contentType);
+			debug("keyValuePost timestamp:", timestamp);
+			debug("keyValuePost more:", more);
+			debug("keyValuePost sid:", sid);
+		}
+
+		this.path = '/' + bucket + '/' + object + "?comp=kv";
+
+		this.path += (mode == SS_FIN) ? "&finalize" : "";
+		if (!"".equals(key))
+			this.path += "&key=" + key;
+
+		// init connection
+		err = init(method, value.length > 0);
+		if (err != 0) {
+			return err;
+		}
+
+		// add reuqest headers
+		setRequestHeader("Content-Type", contentType);
+		setRequestHeader("timestamp", timestamp + "");
+		if (sid != null)
+			setRequestHeader("x-session-id", sid);
+
+		setRequestHeader("Content-Length", "" + value.length);
+
+		if (!this.connect(method, 52, "IO error url: " + this.url))
+			return err;
+
+		try {
+			// Send post request
+			if (value.length > 0) {
+				OutputStream wr = con.getOutputStream();
+				wr.write(value);
+				wr.flush();
+				wr.close();
+			}
+		} catch (IOException e) {
+			createErrorMessage(52, "IO error url: " + this.url, e);
+			return err;
+		}
+
+		return read(mode, false);
+	}
+
+	/**
+	 * Insert key/value pair(s)
+	 * @param bucket - bucket name
+	 * @param object - key/value object name
+	 * @param key - key if format equals application/octet-stream or empty
 	 * @param values - key/value list format key;value
 	 * @param fmt - application/octet-stream - key is used,
 	 *              application/json values json are used
@@ -1265,6 +1526,94 @@ public class EdgexClient extends CommonBase {
 		return read(mode, false);
 	}
 
+
+	/**
+	 * Insert User pair(s)
+	 * @param key - key if format equals application/octet-stream or empty
+	 * @param values - key/value list format key;value
+	 * @param fmt - application/octet-stream - key is used,
+	 *              application/json values json are used
+	 * @param more - true to continue stream operations, false to finish stream operations
+	 * @return error code
+	 */
+	public int keyValueUser(String cluster, String tenant, String key,
+			String value) {
+		String method = "POST";
+		int mode = SS_FIN;
+
+		if (this.debugMode > 0) {
+			debug("\n");
+			debug("keyValueUser");
+			debug("keyValueUser cluster:", cluster);
+			debug("keyValueUser tenant:", tenant);
+			debug("keyValueUser key:", key);
+			debug("keyValueUser value:", value);
+		}
+
+		this.path = '/' + cluster + '/' + tenant + "?comp=kv";
+
+		this.path += (mode == SS_FIN) ? "&finalize" : "";
+		if (!"".equals(key))
+			this.path += "&key=" + key;
+		if (!"".equals(value))
+			this.path += "&uservalue=" + value;
+
+		// init connection
+		err = init(method, false);
+		if (err != 0) {
+			return err;
+		}
+
+		if (!this.connect(method, 53, "IO error url: " + this.url))
+			return err;
+
+		return read(mode, false);
+	}
+
+	/**
+	 * Insert User pair(s)
+	 * @param bucket - bucket name
+	 * @param object - key/value object name
+	 * @param key - key if format equals application/octet-stream or empty
+	 * @param values - key/value list format key;value
+	 * @param fmt - application/octet-stream - key is used,
+	 *              application/json values json are used
+	 * @param more - true to continue stream operations, false to finish stream operations
+	 * @return error code
+	 */
+	public int keyValueACL(String bucket, String object, String key,
+			String value) {
+		String method = "POST";
+		int mode = SS_FIN;
+
+		if (this.debugMode > 0) {
+			debug("\n");
+			debug("keyValueACL");
+			debug("keyValueACL bucket:", bucket);
+			debug("keyValueACL object:", object);
+			debug("keyValueACL key:", key);
+			debug("keyValueACL value:", value);
+		}
+
+		this.path = '/' + bucket + '/' + object + "?comp=kv";
+
+		this.path += (mode == SS_FIN) ? "&finalize" : "";
+		if (!"".equals(key))
+			this.path += "&key=" + key;
+		if (!"".equals(value))
+			this.path += "&aclvalue=" + value;
+
+		// init connection
+		err = init(method, false);
+		if (err != 0) {
+			return err;
+		}
+
+		if (!this.connect(method, 53, "IO error url: " + this.url))
+			return err;
+
+		return read(mode, false);
+	}
 
 
 	/**
@@ -1467,6 +1816,45 @@ public class EdgexClient extends CommonBase {
 			return err;
 
 		return read(SS_FIN, false);
+	}
+
+	/**
+	 * Get value for key
+	 * @param bucket - bucket name
+	 * @param object - object name
+	 * @param key - start key
+	 * @return error code
+	 */
+	public int keyValueGet(String bucket, String object, String key) {
+		if (this.debugMode > 0) {
+			debug("\n");
+			debug("keyValueGet");
+			debug("keyValueGet bucket:", bucket);
+			debug("keyValueGet object:", object);
+			debug("keyValueGet key:", key);
+			debug("keyValueGet sid:", this.sid);
+		}
+
+		this.path = '/' + bucket + '/' + object + "?comp=kvget";
+
+		this.path += "&key=" + key;
+
+		// method
+		String method = "GET";
+
+		// init connection
+		err = init(method, false);
+		if (err != 0) {
+			return err;
+		}
+
+		// add reuqest headers
+		setRequestHeader("Content-Length", "0");
+
+		if (!this.connect(method, 55, "IO error url: " + this.url))
+			return err;
+
+		return read(SS_FIN, true);
 	}
 
 	/**
