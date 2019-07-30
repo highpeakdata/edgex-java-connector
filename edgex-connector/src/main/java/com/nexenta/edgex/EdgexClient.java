@@ -194,7 +194,13 @@ public class EdgexClient extends CommonBase {
 		if (this.key != null && this.secret != null) {
 		   try {
 			   String date = dateFormat.format(new Date());
-			   String contentType = getRequestHeader("content-type");
+			   String contentType =  this.con.getRequestProperty("content-type");
+			   if (contentType == null) {
+				   contentType = "text/plain";
+				   con.setRequestProperty("content-type", contentType);
+			   }
+			   if (this.debugMode > 0)
+				   out("Content-type: ", contentType);
 			   String signature =  s3signature.signRequest(secret, method,
 							contentType,
 							date,

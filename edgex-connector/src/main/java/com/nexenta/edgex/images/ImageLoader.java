@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Properties;
 
 import javax.xml.bind.DatatypeConverter;
 
@@ -34,17 +35,35 @@ public class ImageLoader extends CommonBase {
 		}
 	}
 
+
 	public ImageLoader(String bucket, String object) {
 		this.bucket = bucket;
 		this.object = object;
-		out("\n\nSetup edgex client");
 		String url = (System.getProperty("edgex") != null ? System.getProperty("edgex") : "http://localhost:9982");
 		out("URL", url);
 		String key = System.getProperty("key");
 		String secret = System.getProperty("secret");
 		String debug = System.getProperty("debug");
+
+		String config = System.getProperty("user.home") + "/.s3cfg";
+		out("Config path: " + config);
+
+        Properties prop = new Properties();
+		try {
+	        prop.load(new FileInputStream(config));
+	    } catch (Exception ex) {
+	    }
+
+		if (key == null)
+			key = prop.getProperty("access_key");
+		if (secret == null)
+			secret = prop.getProperty("secret_key");
+
 		out("key", key);
 		out("secret", secret);
+		out("");
+
+
 
 		this.keys = new ArrayList<String>();
 		this.md5 = new ArrayList<String>();
@@ -55,6 +74,7 @@ public class ImageLoader extends CommonBase {
 				secret);
 		if (debug != null)
 			edgex.setDebugMode(2);
+
 	}
 
 	public int createObject() {
@@ -71,48 +91,90 @@ public class ImageLoader extends CommonBase {
 			err = edgex.keyValueCreate(bucket, object, "image/jpeg",
 					EdgexClient.DEFAULT_CHUNKSIZE, EdgexClient.DEFAULT_BTREE_ORDER);
 			if (err != 0) {
-				out("Object create  err: ", err);
+				out("Object create error: ", err);
 				return err;
 			}
 		}
 
+		if (err != 0) {
+			out("Object io error: ", err);
+			return err;
+		}
+
 
 		File fd = new File(path);
-		if (!fd.exists())
+		if (!fd.exists()) {
+			out("File does not exists: " + fd.getAbsolutePath());
 			return -1;
+		}
 		FileInputStream fi = null;
 		int len, off, l;
 		byte buf[];
 		String m5;
 
-		for (File f: fd.listFiles()) {
-			if (f.isFile() && f.canRead()) {
-				len = (int) f.length();
-				out("Loading " + f.getAbsolutePath() + " len: " + len);
-				fi = null;
-				try {
-					fi = new FileInputStream(f);
-					buf = new byte[len];
-					off = 0;
-					while ((l = fi.read(buf, off, len)) >= 0 && len > 0) {
-						off += l;
-						len -= l;
-					}
+		// File case
+		if (fd.isFile()) {
+			if (!fd.canRead()) {
+				out("Don't have permissions to read file: " + fd.getAbsolutePath());
+				return 500;
+			}
+			len = (int) fd.length();
+			out("Loading " + fd.getAbsolutePath() + " len: " + len);
+			fi = null;
+			try {
+				fi = new FileInputStream(fd);
+				buf = new byte[len];
+				off = 0;
+				while ((l = fi.read(buf, off, len)) >= 0 && len > 0) {
+					off += l;
+					len -= l;
+				}
 
-					m5 = calcMD5(buf);
-					md5.add(m5);
+				m5 = calcMD5(buf);
+				md5.add(m5);
 
-					out(f.getName() + " insert md5: " + m5);
-					err = edgex.keyValuePostOne(bucket, object, f.getName(), buf,
-							"image/jpeg", f.lastModified(), true);
-					if (err == 0) {
-						keys.add(f.getName());
+				out(fd.getName() + " insert md5: " + m5);
+				err = edgex.keyValuePostOne(bucket, object, fd.getName(), buf,
+						"image/jpeg", fd.lastModified(), true);
+				if (err == 0) {
+					keys.add(fd.getName());
+				}
+			} catch (Exception e) {
+				err("Loading error", e);
+				return -2;
+			} finally {
+				try {	fi.close();	} catch (IOException ec) {}
+			}
+		} else { // directory case
+			for (File f: fd.listFiles()) {
+				if (f.isFile() && f.canRead()) {
+					len = (int) f.length();
+					out("Loading " + f.getAbsolutePath() + " len: " + len);
+					fi = null;
+					try {
+						fi = new FileInputStream(f);
+						buf = new byte[len];
+						off = 0;
+						while ((l = fi.read(buf, off, len)) >= 0 && len > 0) {
+							off += l;
+							len -= l;
+						}
+
+						m5 = calcMD5(buf);
+						md5.add(m5);
+
+						out(f.getName() + " insert md5: " + m5);
+						err = edgex.keyValuePostOne(bucket, object, f.getName(), buf,
+								"image/jpeg", f.lastModified(), true);
+						if (err == 0) {
+							keys.add(f.getName());
+						}
+					} catch (Exception e) {
+						err("Loading error", e);
+						return -2;
+					} finally {
+						try {	fi.close();	} catch (IOException ec) {}
 					}
-				} catch (Exception e) {
-					err("Loading error", e);
-					return -2;
-				} finally {
-					try {	fi.close();	} catch (IOException ec) {}
 				}
 			}
 		}
@@ -149,13 +211,31 @@ public class ImageLoader extends CommonBase {
 	}
 
 	public static void main(String[] args)  {
-		if (args.length < 3) {
-		   out("Usage: java -Dedgex=http://<s3 gateway ip>:<port> -Dkey=<s3 key> -Dsecret=<s3 secret key> ImageLoader <bucket> <image object> <data path>");
+		if (args.length < 2) {
+		   out("Usage: java -Dedgex=http[s]://<s3 gateway ip>[:<port>] [-Dkey=<s3 key>] [-Dsecret=<s3 secret key>] [-Ddebug=1] -jar ImageLoader <bucket/image object> <data path> [-v]");
+		   out("  where <data path> - image directory or file path");
+		   out("        -v - verification flag");
 		   System.exit(1);
 		}
-		String bucket = args[0];
-		String object = args[1];
-		String path = args[2];
+		String object = args[0];
+		int p = object.indexOf('/');
+		if (p < 0) {
+			error(" Invalid object : " + object);
+			System.exit(1);
+		}
+
+		String bucket = object.substring(0, p);
+		object = object.substring(p+1);
+
+		out("\n\nSetup s3x client\n");
+		out("Target: s3x://" + bucket + "/" + object);
+
+		String path = args[1];
+		out("Source: file://" + path);
+
+		boolean verify = false;
+		if (args.length > 2 && "-v".equalsIgnoreCase(args[2]))
+			verify = true;
 
 		ImageLoader loader = new ImageLoader(bucket, object);
 
@@ -165,9 +245,12 @@ public class ImageLoader extends CommonBase {
 			System.exit(1);
 		}
 
-		err = loader.testImages();
-		if (err != 0) {
-			error(" Image test error: " + err);
+
+		if (verify) {
+			err = loader.testImages();
+			if (err != 0) {
+				error(" Image test error: " + err);
+			}
 		}
 
 		try {
